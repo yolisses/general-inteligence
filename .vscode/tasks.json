@@ -1,0 +1,15 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "CUDA",
+            "type": "shell",
+            "command": "nvcc -G -g --run '${file}' -gencode='arch=compute_50,code=sm_50' -Wno-deprecated-gpu-targets -rdc=true -lcudadevrt",
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}
