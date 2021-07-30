@@ -71,11 +71,10 @@ __device__ bool canSet(Node *setter, Node *node)
 {
     // Posso adicionar mais e mais coisa como node->parent->parent == setter->parent
     // a depender de ajuste fino para manter a cadeia
-    if (node->parent == setter || node->parent == setter->parent || node->parent->parent == setter)
-    {
-        return true;
-    }
-    return false;
+    return (
+        node->parent == setter ||
+        node->parent == setter->parent ||
+        node->parent->parent == setter);
 }
 
 __global__ void call(Node *caller);
@@ -116,7 +115,7 @@ __global__ void call(Node *caller)
             // printf("Node[%d], type %d, call Node[%d]\n", caller->id(), caller->type, caller->childs[i]->id());
             if (canSet(caller, caller->childs[i]))
             {
-                printf("%d->Node[%d] call %d->%d->Node[%d]\n",
+                printf("%d->Node[%d] can set %d->%d->Node[%d]\n",
                        caller->parent->id(),
                        caller->id(),
                        caller->childs[i]->parent->parent->id(),
