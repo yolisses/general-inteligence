@@ -2,7 +2,7 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define SIZE 10
+#define SIZE 20
 
 #define TYPE_AND 0
 
@@ -29,6 +29,8 @@ struct Node
     Node *childs[4];
     Node *calledBy;
     Node *parent;
+
+    float weights[4];
 
     __device__ int id()
     {
@@ -59,11 +61,63 @@ __global__ void initializeRandom()
         // printf("%d->Node[%d]\n", nodes[i].parent->id(), nodes[i].id());
     }
 
-    nodes[i].lastValue = i * 111; //marcador do tipo Node[3].lastvalue = 333
+    nodes[i].lastValue = i * 111; //marcador, exemplo: Node[3].lastvalue = 333
+    nodes[i].weights[j] = i;      //marcador, exemplo: Node[3].weight[i] = 3
 
     nodes[i].alreadyUsed = false; //por segurança
 
     nodes[i].type = TYPE_AND; //para testes iniciais
+}
+
+__global__ void descendent(Node *parent, Node *parallelParent, int limit = 0)
+{
+    if (parent->alreadyUsed == true || limit >= 1)
+        return;
+
+    printf("Parent Node[%d] (%d, %d, %d, %d)\n",
+           parent->id(),
+           parent->childs[0]->id(),
+           parent->childs[1]->id(),
+           parent->childs[2]->id(),
+           parent->childs[3]->id());
+
+    parent->alreadyUsed = true;
+
+    curandState_t state;
+    curand_init(clock64(), 0, 0, &state);
+    // Copy in parallel parent
+    for (int i = 0; i < 4; i++)
+    {
+        parallelParent->childs[i] = &nodes[curand(&state) % SIZE];
+
+        // And copy parent->childs[i] status ..
+        for (int j = 0; j < 4; j++)
+        {
+            parallelParent->childs[i]->weights[j] = parent->childs[i]->weights[j];
+        }
+    }
+    printf("Parallel parent Node[%d] (%d, %d, %d, %d)\n",
+           parallelParent->id(),
+           parallelParent->childs[0]->id(),
+           parallelParent->childs[1]->id(),
+           parallelParent->childs[2]->id(),
+           parallelParent->childs[3]->id());
+
+    // Iterate next steps
+    for (int i = 0; i < 4; i++)
+    {
+        parallelParent->childs[i] = &nodes[curand(&state) % SIZE];
+        descendent<<<1, 1>>>(parent->childs[i], parallelParent->childs[i], limit + 1);
+        __syncthreads();
+    }
+}
+
+__global__ void reproduce()
+{
+    curandState_t state;
+    curand_init(clock64(), 0, 0, &state);
+    Node *parallelParent = &nodes[curand(&state) % SIZE];
+    descendent<<<1, 1>>>(nodes, parallelParent);
 }
 
 // setter set node
@@ -74,7 +128,8 @@ __device__ bool canSet(Node *setter, Node *node)
     return (
         node->parent == setter ||
         node->parent == setter->parent ||
-        node->parent->parent == setter);
+        node->parent->parent == setter ||
+        node->parent->parent == setter->parent);
 }
 
 __global__ void call(Node *caller);
@@ -115,12 +170,12 @@ __global__ void call(Node *caller)
             // printf("Node[%d], type %d, call Node[%d]\n", caller->id(), caller->type, caller->childs[i]->id());
             if (canSet(caller, caller->childs[i]))
             {
-                printf("%d->Node[%d] can set %d->%d->Node[%d]\n",
-                       caller->parent->id(),
-                       caller->id(),
-                       caller->childs[i]->parent->parent->id(),
-                       caller->childs[i]->parent->id(),
-                       caller->childs[i]->id());
+                // printf("%d->Node[%d] can set %d->%d->Node[%d]\n",
+                //        caller->parent->id(),
+                //        caller->id(),
+                //        caller->childs[i]->parent->parent->id(),
+                //        caller->childs[i]->parent->id(),
+                //        caller->childs[i]->id());
             }
         }
         else
@@ -145,6 +200,14 @@ __global__ void resetAlreadyUseds()
     nodes[i].alreadyUsed = false;
 }
 
+__global__ void logNodesLastValues()
+{
+    for (int i = 0; i < SIZE; i++)
+    {
+        printf("%d ", (int)nodes[i].weights[0]);
+    }
+}
+
 int main()
 {
     allocNodes<<<1, 1>>>();
@@ -157,7 +220,12 @@ int main()
         cudaDeviceSynchronize();
         resetAlreadyUseds<<<SIZE, 1>>>();
         cudaDeviceSynchronize();
+        reproduce<<<1, 1>>>();
+        cudaDeviceSynchronize();
+        logNodesLastValues<<<1, 1>>>();
+        cudaDeviceSynchronize();
     }
+
     cudaCheckError();
 }
 
