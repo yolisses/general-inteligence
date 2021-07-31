@@ -2,7 +2,7 @@
 #include <curand.h>
 #include <curand_kernel.h>
 
-#define SIZE 20
+#define SIZE 100
 
 #define TYPE_AND 0
 #define TYPE_AVA 1
@@ -18,6 +18,9 @@
 
 struct Node;
 __device__ Node *nodes;
+
+__device__ Node *firstAva;
+__device__ Node *actualAva;
 
 struct Node
 {
@@ -69,6 +72,9 @@ __global__ void initializeRandom()
     nodes[i].actualIndex = 0;
 
     nodes[i].type = (i + 1) % 5 == 0 ? TYPE_AVA : TYPE_AND; //para testes iniciais
+
+    firstAva = &nodes[4];
+    actualAva = &nodes[4];
 }
 
 __global__ void descendent(Node *parent, Node *parallelParent, int limit = 0)
@@ -122,6 +128,12 @@ __global__ void reproduce()
     descendent<<<1, 1>>>(nodes, parallelParent);
 }
 
+__device__ void addInAvaList(Node *newAva)
+{
+    actualAva->childs[1] = newAva;
+    actualAva = newAva;
+}
+
 // setter set node
 __device__ bool canSet(Node *setter, Node *node)
 {
@@ -152,6 +164,7 @@ __global__ void receive(Node *receiver, float value, Node *from)
             receive<<<1, 1>>>(receiver->calledBy, value, receiver);
             // printf("Node[%d] (and) recebeu quatro vezes\n", receiver->id());
         }
+        receiver->lastValue = value;
         break;
     case TYPE_AVA:
         // printf("Node[%d] eh do tipo AVA, actualIndex: %d\n", receiver->id(), receiver->actualIndex);
@@ -159,8 +172,10 @@ __global__ void receive(Node *receiver, float value, Node *from)
         {
             receiver->actualIndex = 2;
             receiver->childs[0] = from;
-            printf("Node[%d] (ava) de Node[%d] pela primeira vez na rodada,\nSeu child[0] agora é Node[%d]\n",
-                   receiver->id(), from->id(), receiver->childs[0]->id());
+            addInAvaList(receiver);
+            receiver->lastValue = value;
+            printf("Node[%d] (ava) de Node[%d] pela primeira vez na rodada, lastvalue %d\n",
+                   receiver->id(), from->id(), receiver->childs[0]->id(), (int)receiver->lastValue);
         }
         else
         {
@@ -171,7 +186,6 @@ __global__ void receive(Node *receiver, float value, Node *from)
         break;
     }
 
-    receiver->lastValue = value;
     receiver->alreadyUsed = false; //allow node to be called several times
     // printf("Node[%d] recebe de Node[%d], lastValue: %d\n", receiver->id(), from->id(), (int)receiver->lastValue);
 }
@@ -221,6 +235,29 @@ __global__ void logNodesLastValues()
     }
 }
 
+__global__ void logAvaList()
+{
+    Node *trackNode = firstAva;
+    printf("type firstAva: %d\n", firstAva->type);
+    for (int i = 0; i < 20; i++)
+    {
+        if (trackNode->type != TYPE_AVA || trackNode->alreadyUsed)
+            break;
+        printf("->Node[%d] lastValue: %d\n", trackNode->id(), (int)trackNode->lastValue);
+        trackNode->alreadyUsed = true;
+        trackNode = trackNode->childs[1];
+    }
+
+    trackNode = firstAva;
+    for (int i = 0; i < 20; i++)
+    {
+        if (trackNode->type != TYPE_AVA || !trackNode->alreadyUsed)
+            break;
+        trackNode->alreadyUsed = false;
+        trackNode = trackNode->childs[1];
+    }
+}
+
 int main()
 {
     allocNodes<<<1, 1>>>();
@@ -233,10 +270,12 @@ int main()
         cudaDeviceSynchronize();
         resetAlreadyUseds<<<SIZE, 1>>>();
         cudaDeviceSynchronize();
-        reproduce<<<1, 1>>>();
+        logAvaList<<<1, 1>>>();
         cudaDeviceSynchronize();
-        logNodesLastValues<<<1, 1>>>();
-        cudaDeviceSynchronize();
+        // reproduce<<<1, 1>>>();
+        // cudaDeviceSynchronize();
+        // logNodesLastValues<<<1, 1>>>();
+        // cudaDeviceSynchronize();
     }
 
     cudaCheckError();
