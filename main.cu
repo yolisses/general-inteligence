@@ -5,6 +5,7 @@
 #define SIZE 20
 
 #define TYPE_AND 0
+#define TYPE_AVA 1
 
 #define cudaCheckError()                                                                       \
     {                                                                                          \
@@ -61,12 +62,13 @@ __global__ void initializeRandom()
         // printf("%d->Node[%d]\n", nodes[i].parent->id(), nodes[i].id());
     }
 
-    nodes[i].lastValue = i * 111; //marcador, exemplo: Node[3].lastvalue = 333
-    nodes[i].weights[j] = i;      //marcador, exemplo: Node[3].weight[i] = 3
+    nodes[i].lastValue = i;  //marcador, exemplo: Node[3].lastvalue = 3
+    nodes[i].weights[j] = i; //marcador, exemplo: Node[3].weight[i] = 3
 
     nodes[i].alreadyUsed = false; //por segurança
+    nodes[i].actualIndex = 0;
 
-    nodes[i].type = TYPE_AND; //para testes iniciais
+    nodes[i].type = (i + 1) % 5 == 0 ? TYPE_AVA : TYPE_AND; //para testes iniciais
 }
 
 __global__ void descendent(Node *parent, Node *parallelParent, int limit = 0)
@@ -134,7 +136,7 @@ __device__ bool canSet(Node *setter, Node *node)
 
 __global__ void call(Node *caller);
 
-__global__ void receive(Node *receiver, float value)
+__global__ void receive(Node *receiver, float value, Node *from)
 {
     receiver->actualIndex++;
 
@@ -147,20 +149,40 @@ __global__ void receive(Node *receiver, float value)
         if (receiver->actualIndex >= 4)
         {
             receiver->actualIndex = 0;
-            receive<<<1, 1>>>(receiver->calledBy, value);
+            receive<<<1, 1>>>(receiver->calledBy, value, receiver);
             // printf("Node[%d] (and) recebeu quatro vezes\n", receiver->id());
         }
         break;
+    case TYPE_AVA:
+        // printf("Node[%d] eh do tipo AVA, actualIndex: %d\n", receiver->id(), receiver->actualIndex);
+        if (receiver->actualIndex == 1) // Primeira vez nessa rodada
+        {
+            receiver->actualIndex = 2;
+            receiver->childs[0] = from;
+            printf("Node[%d] (ava) de Node[%d] pela primeira vez na rodada,\nSeu child[0] agora é Node[%d]\n",
+                   receiver->id(), from->id(), receiver->childs[0]->id());
+        }
+        else
+        {
+            receiver->actualIndex = 1;
+        }
+        receive<<<1, 1>>>(receiver->calledBy, value, receiver);
+        // printf("Node[%d] (ava) recebeu uma vezes\n", receiver->id());
+        break;
     }
+
     receiver->lastValue = value;
     receiver->alreadyUsed = false; //allow node to be called several times
+    // printf("Node[%d] recebe de Node[%d], lastValue: %d\n", receiver->id(), from->id(), (int)receiver->lastValue);
 }
 
 __global__ void call(Node *caller)
 {
     caller->alreadyUsed = true;
 
-    for (int i = 0; i < 4; i++)
+    int numberOfCallChildren = caller->type == TYPE_AVA ? 1 : 4;
+
+    for (int i = 0; i < numberOfCallChildren; i++)
     {
         if (!caller->childs[i]->alreadyUsed)
         {
@@ -168,19 +190,10 @@ __global__ void call(Node *caller)
             caller->childs[i]->calledBy = caller;
             call<<<1, 1>>>(caller->childs[i]);
             // printf("Node[%d], type %d, call Node[%d]\n", caller->id(), caller->type, caller->childs[i]->id());
-            if (canSet(caller, caller->childs[i]))
-            {
-                // printf("%d->Node[%d] can set %d->%d->Node[%d]\n",
-                //        caller->parent->id(),
-                //        caller->id(),
-                //        caller->childs[i]->parent->parent->id(),
-                //        caller->childs[i]->parent->id(),
-                //        caller->childs[i]->id());
-            }
         }
         else
         {
-            receive<<<1, 1>>>(caller, caller->childs[i]->lastValue);
+            receive<<<1, 1>>>(caller, caller->childs[i]->lastValue, caller->childs[i]);
             // printf("Node[%d] tentou chamar Node[%d] usado, recebe %.0f\n", caller->id(), caller->childs[i]->id(), caller->childs[i]->lastValue);
         }
     }
